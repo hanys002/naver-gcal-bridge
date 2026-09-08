@@ -348,9 +348,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
-      
-        
-      
-      Stop Claude
-    원본 텍스트번역 평가보내주신 의견은 Google 번역을 개선하는 데 사용됩니다.
