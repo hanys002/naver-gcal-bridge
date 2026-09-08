@@ -43,6 +43,16 @@ OUT_PATH = ROOT / "docs" / "calendar.ics"
 BASE = "https://caldav.calendar.naver.com"
 MAX_OBJECTS_PER_CAL = 3000
 
+REPORT_BODY = (
+    '<?xml version="1.0" encoding="utf-8" ?>'
+    '<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">'
+    "<d:prop><d:getetag/><c:calendar-data/></d:prop>"
+    '<c:filter><c:comp-filter name="VCALENDAR">'
+    '<c:comp-filter name="VEVENT"/>'
+    "</c:comp-filter></c:filter>"
+    "</c:calendar-query>"
+)
+
 PROPFIND_BODY = (
     '<?xml version="1.0" encoding="utf-8" ?>'
     '<d:propfind xmlns:d="DAV:"><d:prop>'
@@ -211,6 +221,43 @@ def _fetch_ics(sess: requests.Session, base_url: str, href: str) -> str | None:
 
 
 def _raw_items(sess: requests.Session, cal_url: str) -> list[str]:
+    """캘린더 하나의 일정을 .ics 원문 목록으로 가져온다.
+
+    네이버는 표준 multistatus(XML) 대신 캘린더 전체를 .ics 원문으로 돌려주므로
+    캘린더 URL 자체를 GET 하는 경로를 가장 먼저 시도한다.
+    """
+    # 0) 캘린더 URL 직접 GET → 전체 .ics
+    try:
+        resp = sess.get(cal_url, timeout=60)
+        if resp.status_code == 200:
+            resp.encoding = resp.encoding or "utf-8"
+            if "BEGIN:VCALENDAR" in resp.text:
+                LOG.info("  GET 전체 ICS 수신 (%d bytes)", len(resp.content))
+                return [resp.text]
+        LOG.info("  GET status=%s len=%d", resp.status_code, len(resp.content))
+    except Exception as exc:  # noqa: BLE001
+        LOG.info("  GET 실패: %s", _brief(exc))
+
+    # 1) REPORT(calendar-query) — 네이버는 여기서도 .ics 원문을 줄 수 있다
+    try:
+        resp = sess.request(
+            "REPORT",
+            cal_url,
+            headers={"Depth": "1", "Content-Type": 'application/xml; charset="utf-8"'},
+            data=REPORT_BODY.encode("utf-8"),
+            timeout=60,
+        )
+        if resp.status_code in (200, 207):
+            resp.encoding = resp.encoding or "utf-8"
+            body = resp.text.lstrip()
+            if body.startswith("BEGIN:VCALENDAR"):
+                LOG.info("  REPORT 원문 ICS 수신 (%d bytes)", len(resp.content))
+                return [resp.text]
+        LOG.info("  REPORT status=%s len=%d", resp.status_code, len(resp.content))
+    except Exception as exc:  # noqa: BLE001
+        LOG.info("  REPORT 실패: %s", _brief(exc))
+
+    # 2) 표준 WebDAV: PROPFIND 목록 → 개별 GET
     hrefs = _list_ics_hrefs(sess, cal_url)
     out = []
     for href in hrefs:
