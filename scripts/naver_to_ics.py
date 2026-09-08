@@ -186,6 +186,15 @@ def _list_ics_hrefs(sess: requests.Session, cal_url: str) -> list[str]:
         if "calendar" in ctype or href.lower().endswith(".ics"):
             hrefs.append(href)
 
+    if not hrefs:
+        LOG.info(
+            "  PROPFIND status=%s body=%dB responses=%d sample=%s",
+            resp.status_code,
+            len(resp.content),
+            len(root.findall("{DAV:}response")),
+            resp.text[:200].replace("\n", " "),
+        )
+
     return hrefs[:MAX_OBJECTS_PER_CAL]
 
 
@@ -240,18 +249,19 @@ def collect_components(cals, start: datetime, end: datetime, user: str, pw: str)
         cal_url = str(cal.url)
         raws: list[str] = []
 
-        # 1차: caldav 라이브러리
+        # 라이브러리 조회와 PROPFIND 조회를 모두 수행하고 UID 로 중복 제거한다.
         try:
-            raws = [o.data for o in cal.date_search(start=start, end=end, expand=False)]
-            LOG.info("[%s] 라이브러리 조회 %d건", name, len(raws))
+            lib = [o.data for o in cal.date_search(start=start, end=end, expand=False)]
         except Exception as exc:  # noqa: BLE001
-            LOG.info("[%s] 라이브러리 조회 실패(%s) → PROPFIND 우회", name, _brief(exc))
-            try:
-                raws = _raw_items(sess, cal_url)
-                LOG.info("[%s] PROPFIND 우회 %d건", name, len(raws))
-            except Exception as exc2:  # noqa: BLE001
-                LOG.error("[%s] 조회 실패: %s", name, _brief(exc2))
-                continue
+            lib = []
+            LOG.info("[%s] lib 예외: %s", name, _brief(exc))
+        try:
+            alt = _raw_items(sess, cal_url)
+        except Exception as exc:  # noqa: BLE001
+            alt = []
+            LOG.info("[%s] dav 예외: %s", name, _brief(exc))
+        LOG.info("[%s] lib=%d dav=%d", name, len(lib), len(alt))
+        raws = list(lib) + list(alt)
 
         for raw in raws:
             if not raw:
@@ -338,3 +348,9 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+      
+        
+      
+      Stop Claude
+    원본 텍스트번역 평가보내주신 의견은 Google 번역을 개선하는 데 사용됩니다.
