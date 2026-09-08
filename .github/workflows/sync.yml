@@ -1,0 +1,67 @@
+name: Naver → Google Calendar Sync
+
+on:
+  schedule:
+    # 30분마다 (UTC 기준. GitHub Actions 는 부하에 따라 수 분 지연될 수 있음)
+    - cron: "*/30 * * * *"
+  workflow_dispatch:        # 수동 실행 버튼
+  push:
+    branches: [main]
+    paths:
+      - "scripts/**"
+      - ".github/workflows/sync.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: naver-gcal-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      NAVER_ID:            ${{ secrets.NAVER_ID }}
+      NAVER_APP_PASSWORD:  ${{ secrets.NAVER_APP_PASSWORD }}
+      NAVER_CALDAV_URL:    https://caldav.calendar.naver.com/caldav/
+      SYNC_PAST_DAYS:      "30"
+      SYNC_FUTURE_DAYS:    "365"
+      CALENDAR_NAME:       "Naver Calendar"
+      TIMEZONE:            "Asia/Seoul"
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+      GOOGLE_CALENDAR_ID:          ${{ secrets.GOOGLE_CALENDAR_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Fetch Naver calendar → docs/calendar.ics
+        run: python scripts/naver_to_ics.py
+
+      - name: Upsert into Google Calendar (mode B, optional)
+        if: ${{ env.GOOGLE_SERVICE_ACCOUNT_JSON != '' }}
+        run: python scripts/ics_to_gcal.py
+
+      - name: Commit updated ICS
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- docs/calendar.ics; then
+            echo "변경 없음 — 커밋 생략"
+          else
+            git add docs/calendar.ics
+            git commit -m "chore: sync naver calendar ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+            git push
+          fi
